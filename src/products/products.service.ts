@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { Product } from './entities';
-import { Repository } from 'typeorm';
+import { Product, ProductImage } from './entities';
+import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { validate as isUuId } from 'uuid';
@@ -19,11 +19,22 @@ export class ProductsService {
   constructor(
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
+
+    @InjectRepository(ProductImage)
+    private readonly productImageRepository: Repository<ProductImage>,
+
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(createProductDto: CreateProductDto) {
+    const { images = [], ...productDto } = createProductDto;
+
     try {
-      const newProduct = this.productRepository.create(createProductDto);
+      const newProduct = this.productRepository.create({
+        ...productDto,
+        images: images.map((imageStr) => this.productImageRepository.create({ url: imageStr })),
+      });
+
       await this.productRepository.save(newProduct);
       return newProduct;
     } catch (error) {
@@ -38,6 +49,9 @@ export class ProductsService {
       const productsFound = await this.productRepository.find({
         take: limit,
         skip: (page - 1) * limit,
+        relations: {
+          images: true,
+        },
       });
 
       return productsFound;
@@ -50,17 +64,15 @@ export class ProductsService {
     let productFound: Product;
 
     if (isUuId(termQuery)) {
-
       productFound = await this.productRepository.findOneBy({ id: termQuery });
-      
     } else {
-
       productFound = await this.productRepository
-        .createQueryBuilder()
-        .where('UPPER(title) = :title OR slug = :slug', {
+        .createQueryBuilder('product')
+        .where('UPPER(product.title) = :title OR product.slug = :slug', {
           title: termQuery.toUpperCase(),
           slug: termQuery.toLowerCase(),
         })
+        .leftJoinAndSelect('product.images', 'prod_images')
         .getOne();
     }
 
@@ -72,19 +84,36 @@ export class ProductsService {
   }
 
   async update(id: string, updateProductDto: UpdateProductDto) {
+    const { images: imagesDto, ...productDto } = updateProductDto;
     const productUpdated = await this.productRepository.preload({
-      id: id,
-      ...updateProductDto,
+      id,
+      ...productDto,
     });
 
     if (!productUpdated) {
       throw new NotFoundException('Product not found');
     }
 
+    // * transaction borrar iamgenes anteriores y agregar las nuevas
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
     try {
-      await this.productRepository.save(productUpdated)
+      if (imagesDto) {
+        queryRunner.manager.delete(ProductImage, { product: id });
+        productUpdated.images = imagesDto.map((imageStr) => this.productImageRepository.create({ url: imageStr }));
+      } else {
+        productUpdated.images = await this.productImageRepository.findBy({product: { id }});
+      }
+
+      await queryRunner.manager.save(productUpdated);
+      await queryRunner.commitTransaction();
+      await queryRunner.release();
       return productUpdated;
     } catch (error) {
+      await queryRunner.rollbackTransaction();
+      await queryRunner.release();
       this.handleDBExeptions(error);
     }
   }

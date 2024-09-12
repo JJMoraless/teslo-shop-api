@@ -1,11 +1,12 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.setGlobalPrefix('api');
+  const logger = new Logger('bootstrap');
 
+  app.setGlobalPrefix('api');
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -13,9 +14,8 @@ async function bootstrap() {
     }),
   );
 
-  
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT_API;
   await app.listen(port);
-  console.log(`API is running on: http://localhost:${port}/api`);
+  logger.log(`API is running on: http://localhost:${port}/api`);
 }
 bootstrap();
