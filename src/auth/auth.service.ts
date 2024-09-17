@@ -6,22 +6,25 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
-import * as bcrypt from 'bcrypt';
 import { LoginUserDto } from './dto';
+import { JwtPayload } from './interfaces/jwt-payload.interface';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger('ProductsService');
-   constructor(
+  constructor(
     @InjectRepository(User)
     private readonly userRepositoy: Repository<User>,
+
+    private readonly jwtService: JwtService,
   ) {}
 
-  async create(createUserDto: CreateUserDto) {
+  async saveUser(createUserDto: CreateUserDto) {
     const { password, ...userData } = createUserDto;
 
     try {
@@ -32,46 +35,39 @@ export class AuthService {
 
       await this.userRepositoy.save(userCreated);
 
-    
-      return userCreated;   // TODO: RETORNAR JWT
+      return {
+        user: userCreated,
+        token: this.getJwtToken({ id: userCreated.id }),
+      };
+      
     } catch (error) {
       this.handleDBExeptions(error);
     }
   }
 
-  async login(loginUserDto: LoginUserDto) {
+  async logInUser(loginUserDto: LoginUserDto) {
     const { password, email } = loginUserDto;
 
     const userFound = await this.userRepositoy.findOne({
       where: { email },
-      select: { email: true, password: true },
+      select: { email: true, password: true, id: true },
     });
-
-    if (!userFound) {
-      throw new UnauthorizedException('Not valid credentials');
-    }
+ 
 
     if (!bcrypt.compareSync(password, userFound.password)) {
       throw new UnauthorizedException('Not valid credentials');
     }
 
-    return userFound; // TODO: RETORNAR JWT
+    return {
+      token: this.getJwtToken({ id: userFound.id }),
+    }; // TODO: RETORNAR JWT
   }
 
-  findAll() {
-    return `This action returns all auth`;
-  }
+ /* ----------------------------- private methods ---------------------------- */
 
-  findOne(id: number) {
-    return `This action returns a #${id} auth`;
-  }
-
-  update(id: number, updateAuthDto: UpdateUserDto) {
-    return `This action updates a #${id} auth`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} auth`;
+  private getJwtToken(payload: JwtPayload) {
+    const token = this.jwtService.sign(payload);
+    return token;
   }
 
   private handleDBExeptions(error: any): never {

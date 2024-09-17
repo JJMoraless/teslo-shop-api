@@ -11,6 +11,7 @@ import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { validate as isUuId } from 'uuid';
+import { User } from 'src/auth/entities/user.entity';
 
 @Injectable()
 export class ProductsService {
@@ -26,14 +27,18 @@ export class ProductsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async create(createProductDto: CreateProductDto) {
-    const { images = [], ...productDto } = createProductDto;
+  async create(createProductDto: CreateProductDto, user: User) {
+    const { images = [], ...productData } = createProductDto;
 
     try {
-      const newProduct = this.productRepository.create({
-        ...productDto,
-        images: images.map((imageStr) => this.productImageRepository.create({ url: imageStr })),
-      });
+      const productToCreate = {
+        user,
+        images: images.map((imageStr) =>
+          this.productImageRepository.create({ url: imageStr }),
+        ),
+        ...productData,
+      };
+      const newProduct = this.productRepository.create(productToCreate);
 
       await this.productRepository.save(newProduct);
       return newProduct;
@@ -83,10 +88,11 @@ export class ProductsService {
     return productFound;
   }
 
-  async update(id: string, updateProductDto: UpdateProductDto) {
+  async update(id: string, updateProductDto: UpdateProductDto, user: User) {
     const { images: imagesDto, ...productDto } = updateProductDto;
     const productUpdated = await this.productRepository.preload({
       id,
+      user,
       ...productDto,
     });
 
@@ -102,9 +108,13 @@ export class ProductsService {
     try {
       if (imagesDto) {
         queryRunner.manager.delete(ProductImage, { product: id });
-        productUpdated.images = imagesDto.map((imageStr) => this.productImageRepository.create({ url: imageStr }));
+        productUpdated.images = imagesDto.map((imageStr) =>
+          this.productImageRepository.create({ url: imageStr }),
+        );
       } else {
-        productUpdated.images = await this.productImageRepository.findBy({product: { id }});
+        productUpdated.images = await this.productImageRepository.findBy({
+          product: { id },
+        });
       }
 
       await queryRunner.manager.save(productUpdated);
